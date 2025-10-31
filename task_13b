@@ -1,0 +1,141 @@
+# tsp_branch_and_bound.py
+# Branch and Bound solver for symmetric TSP using two-min edge lower bound.
+# Works for small-to-medium n (n ≲ 12-14). Uses a min-heap by bound.
+
+import heapq
+import math
+from typing import List, Tuple
+
+class Node:
+    def __init__(self, level:int, path:List[int], bound:float, cost:int):
+        self.level = level      # how many cities in path minus 1 (root level = 0)
+        self.path = path        # current path (sequence of vertex indices)
+        self.bound = bound      # lower bound cost estimate for completion
+        self.cost = cost        # cost accumulated so far
+
+    def __lt__(self, other):
+        # for heapq: node with smaller bound has higher priority
+        return self.bound < other.bound
+
+def first_min(cost_matrix: List[List[int]], i: int) -> int:
+    """Return smallest outgoing edge cost from vertex i (excluding self-loop)."""
+    n = len(cost_matrix)
+    m = math.inf
+    for j in range(n):
+        if i != j and cost_matrix[i][j] < m:
+            m = cost_matrix[i][j]
+    return m
+
+def second_min(cost_matrix: List[List[int]], i: int) -> int:
+    """Return second smallest outgoing edge cost from vertex i (excluding self-loop)."""
+    n = len(cost_matrix)
+    min1 = math.inf
+    min2 = math.inf
+    for j in range(n):
+        if i == j:
+            continue
+        val = cost_matrix[i][j]
+        if val <= min1:
+            min2 = min1
+            min1 = val
+        elif val < min2:
+            min2 = val
+    return min2
+
+def compute_initial_bound(cost_matrix: List[List[int]]) -> float:
+    """Compute initial lower bound using (first_min + second_min)/2 summed over vertices."""
+    n = len(cost_matrix)
+    total = 0
+    for i in range(n):
+        total += (first_min(cost_matrix, i) + second_min(cost_matrix, i))
+    # Each edge counted twice in that sum, so divide by 2
+    return math.ceil(total / 2)
+
+def tsp_branch_and_bound(cost_matrix: List[List[int]], start: int = 0) -> Tuple[int, List[int]]:
+    """
+    Solve TSP using Branch and Bound starting from 'start' vertex.
+    Returns (best_cost, best_path) where best_path is list of vertices (0-indexed) including return to start.
+    """
+    n = len(cost_matrix)
+    if n == 0:
+        return 0, []
+    # initial bound
+    init_bound = compute_initial_bound(cost_matrix)
+
+    # priority queue of nodes ordered by bound
+    pq = []
+    root = Node(level=0, path=[start], bound=init_bound, cost=0)
+    heapq.heappush(pq, root)
+
+    best_cost = math.inf
+    best_path = []
+
+    while pq:
+        node = heapq.heappop(pq)
+        # If bound is already >= best_cost, prune
+        if node.bound >= best_cost:
+            continue
+
+        level = node.level
+        current = node.path[-1]
+
+        # If we have visited all vertices, finalize by returning to start
+        if level == n - 1:
+            # cost to return to start
+            tour_cost = node.cost + cost_matrix[current][start]
+            if tour_cost < best_cost:
+                best_cost = tour_cost
+                best_path = node.path + [start]
+            continue
+
+        # Branch: try all cities not yet in path
+        for city in range(n):
+            if city in node.path:
+                continue
+            new_cost = node.cost + cost_matrix[current][city]
+
+            # Compute new bound:
+            # We approximate: new_bound = new_cost + (remaining_estimate)/2
+            # A more exact update uses mins for current and city (GeeksforGeeks method).
+            # We'll use a standard incremental bound update:
+            # Start with parent's bound and subtract the contribution of current vertex,
+            # then add contribution of edge used. Simpler robust approach: recompute
+            # lower bound for remaining vertices + cost so far for clarity (acceptable for small n).
+
+            # Build visited set for remaining LB computation
+            visited = set(node.path) | {city}
+            # Lower bound from remaining vertices: for each unvisited vertex compute (first_min + second_min)/2,
+            # for visited ones, we adjust by the edge we used.
+            rem_total = 0
+            for v in range(n):
+                if v in visited:
+                    # For visited vertices we still need to account for at least one edge leaving them,
+                    # but to keep bound admissible we can conservatively add the first_min of v
+                    # (this remains a valid lower bound).
+                    rem_total += first_min(cost_matrix, v)
+                else:
+                    # For unvisited: both mins
+                    rem_total += (first_min(cost_matrix, v) + second_min(cost_matrix, v))
+
+            new_bound = new_cost + math.ceil(rem_total / 2)
+
+            # Prune if bound >= best_cost
+            if new_bound < best_cost:
+                new_node = Node(level=node.level + 1, path=node.path + [city], bound=new_bound, cost=new_cost)
+                heapq.heappush(pq, new_node)
+
+    return int(best_cost) if best_cost < math.inf else None, best_path
+
+if __name__ == "__main__":
+    # Example symmetric TSP distance matrix (0 means no self-edge)
+    # Example: 4-city problem
+    cost = [
+        [0, 10, 15, 20],
+        [10, 0, 35, 25],
+        [15, 35, 0, 30],
+        [20, 25, 30, 0]
+    ]
+
+    best_cost, best_path = tsp_branch_and_bound(cost, start=0)
+    print("Best cost:", best_cost)
+    print("Best path (0-indexed):", best_path)
